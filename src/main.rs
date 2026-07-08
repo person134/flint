@@ -1,5 +1,4 @@
 use eframe::egui;
-use eframe::egui::{Color32, Visuals};
 use rfd::FileDialog;
 use serde::Deserialize;
 use std::io::{BufRead, BufReader};
@@ -36,12 +35,6 @@ enum Message {
     Log(String),
 }
 
-enum ThemePref {
-    System,
-    Light,
-    Dark,
-}
-
 struct FlintApp {
     iso_path: String,
     usb_devices: Vec<UsbDevice>,
@@ -52,95 +45,6 @@ struct FlintApp {
     log: Vec<String>,
     rx: Option<mpsc::Receiver<Message>>,
     cancel: Arc<AtomicBool>,
-    theme: ThemePref,
-}
-
-fn parse_rgb(s: &str) -> Option<Color32> {
-    let parts: Vec<u8> = s.split(',').filter_map(|v| v.trim().parse().ok()).collect();
-    if parts.len() == 3 {
-        Some(Color32::from_rgb(parts[0], parts[1], parts[2]))
-    } else {
-        None
-    }
-}
-
-fn try_kde_visuals() -> Option<Visuals> {
-    let home = std::env::var("HOME").ok()?;
-    let content = std::fs::read_to_string(format!("{}/.config/kdeglobals", home)).ok()?;
-
-    let mut bg = None;
-    let mut fg = None;
-    let mut accent = None;
-    let mut section = String::new();
-
-    for line in content.lines() {
-        let t = line.trim();
-        if t.starts_with('[') {
-            section = t.to_string();
-            continue;
-        }
-        match section.as_str() {
-            "[Colors:Window]" => {
-                if let Some(v) = t.strip_prefix("BackgroundNormal=") {
-                    bg = parse_rgb(v);
-                }
-                if let Some(v) = t.strip_prefix("ForegroundNormal=") {
-                    fg = parse_rgb(v);
-                }
-                if let Some(v) = t.strip_prefix("DecorationFocus=") {
-                    accent = parse_rgb(v);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let bg = bg?;
-    let fg = fg?;
-    let accent = accent.unwrap_or(Color32::from_rgb(61, 174, 233));
-
-    let mut visuals = Visuals::dark();
-    visuals.dark_mode = true;
-    visuals.window_fill = bg;
-    visuals.panel_fill = bg;
-    visuals.faint_bg_color = Color32::from_rgb(40, 43, 46);
-    visuals.extreme_bg_color = if bg == Color32::from_rgb(32, 35, 38) {
-        Color32::from_rgb(25, 28, 31)
-    } else {
-        Color32::from_gray(10)
-    };
-    visuals.code_bg_color = Color32::from_rgb(42, 45, 48);
-    visuals.override_text_color = Some(fg);
-    visuals.hyperlink_color = accent;
-
-    visuals.widgets.noninteractive.fg_stroke.color = fg;
-    visuals.widgets.noninteractive.bg_fill = bg;
-    visuals.widgets.noninteractive.bg_stroke.color = Color32::from_rgb(60, 63, 66);
-
-    visuals.widgets.inactive.fg_stroke.color = fg;
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(42, 45, 48);
-    visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(38, 41, 44);
-
-    visuals.widgets.hovered.fg_stroke.color = fg;
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(52, 55, 58);
-
-    visuals.widgets.active.fg_stroke.color = fg;
-    visuals.widgets.active.bg_fill = Color32::from_rgb(52, 55, 58);
-
-    visuals.selection.bg_fill = accent;
-    visuals.selection.stroke.color = accent;
-
-    Some(visuals)
-}
-
-fn detect_visuals() -> Visuals {
-    try_kde_visuals().unwrap_or_else(|| {
-        if detect_is_dark() {
-            Visuals::dark()
-        } else {
-            Visuals::light()
-        }
-    })
 }
 
 fn detect_is_dark() -> bool {
@@ -201,7 +105,6 @@ impl FlintApp {
             log: vec!["flint ready".to_string()],
             rx: None,
             cancel: Arc::new(AtomicBool::new(false)),
-            theme: ThemePref::System,
         }
     }
 
@@ -307,32 +210,6 @@ impl FlintApp {
         self.cancel.store(true, Ordering::SeqCst);
         self.status = "Cancelling...".to_string();
     }
-
-    fn apply_theme(&self, ctx: &egui::Context) {
-        let visuals = match self.theme {
-            ThemePref::System => detect_visuals(),
-            ThemePref::Light => Visuals::light(),
-            ThemePref::Dark => Visuals::dark(),
-        };
-        ctx.set_visuals(visuals);
-    }
-
-    fn cycle_theme(&mut self, ctx: &egui::Context) {
-        self.theme = match self.theme {
-            ThemePref::System => ThemePref::Light,
-            ThemePref::Light => ThemePref::Dark,
-            ThemePref::Dark => ThemePref::System,
-        };
-        self.apply_theme(ctx);
-    }
-
-    fn theme_label(&self) -> &str {
-        match self.theme {
-            ThemePref::System => "auto",
-            ThemePref::Light => "light",
-            ThemePref::Dark => "dark",
-        }
-    }
 }
 
 fn parse_dd_progress(line: &str) -> Option<u64> {
@@ -348,8 +225,6 @@ fn parse_dd_progress(line: &str) -> Option<u64> {
 
 impl eframe::App for FlintApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.apply_theme(ui.ctx());
-
         if let Some(rx) = &self.rx {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
@@ -375,15 +250,8 @@ impl eframe::App for FlintApp {
             }
         }
 
-        ui.horizontal(|ui| {
-            ui.vertical_centered(|ui| {
-                ui.heading(egui::RichText::new("flint").size(20.0));
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(self.theme_label()).clicked() {
-                    self.cycle_theme(ui.ctx());
-                }
-            });
+        ui.vertical_centered(|ui| {
+            ui.heading(egui::RichText::new("flint").size(20.0));
         });
         ui.separator();
         ui.add_space(4.0);
@@ -493,7 +361,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "flint",
         options,
         Box::new(|cc| {
-            cc.egui_ctx.set_visuals(detect_visuals());
+            if detect_is_dark() {
+                cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            } else {
+                cc.egui_ctx.set_visuals(egui::Visuals::light());
+            }
             Ok(Box::new(FlintApp::new()))
         }),
     )?;
