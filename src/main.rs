@@ -138,6 +138,16 @@ impl FlintApp {
         self.selected_idx = self.selected_idx.min(self.usb_devices.len().saturating_sub(1));
     }
 
+    fn is_root() -> bool {
+        Command::new("id")
+            .arg("-u")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            == Some(0)
+    }
+
     fn start_flash(&mut self) {
         if self.iso_path.is_empty() || self.usb_devices.is_empty() {
             return;
@@ -178,26 +188,51 @@ impl FlintApp {
             let _ = tx.send(Message::Log(format!(
                 "Device: {} ({})", dev_label, dev_path
             )));
+
+            let root = Self::is_root();
             let _ = tx.send(Message::Log(format!(
-                "Running: dd if={} of={} bs=4M conv=fsync", iso_path, dev_path
+                "Running as root: {}", root
             )));
 
-            let mut child = match Command::new("pkexec")
-                .arg("dd")
-                .arg(format!("if={}", iso_path))
-                .arg(format!("of={}", dev_path))
-                .args(["bs=4M", "status=progress", "conv=fsync"])
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .spawn()
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = tx.send(Message::Log(format!("Failed to start dd via pkexec: {}", e)));
-                    let _ = tx.send(Message::Done(false));
-                    return;
-                }
-            };
+            let mut child;
+            let use_elevation;
+
+            if root {
+                use_elevation = false;
+                child = match Command::new("dd")
+                    .arg(format!("if={}", iso_path))
+                    .arg(format!("of={}", dev_path))
+                    .args(["bs=4M", "status=progress", "conv=fsync"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(Message::Log(format!("Failed to start dd: {}", e)));
+                        let _ = tx.send(Message::Done(false));
+                        return;
+                    }
+                };
+            } else {
+                use_elevation = true;
+                child = match Command::new("pkexec")
+                    .arg("dd")
+                    .arg(format!("if={}", iso_path))
+                    .arg(format!("of={}", dev_path))
+                    .args(["bs=4M", "status=progress", "conv=fsync"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(Message::Log(format!("Failed to start dd via pkexec: {}", e)));
+                        let _ = tx.send(Message::Done(false));
+                        return;
+                    }
+                };
+            }
 
             let mut stderr = child.stderr.take().expect("stderr not captured");
             let mut buf = vec![0u8; 4096];
@@ -253,6 +288,12 @@ impl FlintApp {
                     }
                     let _ = tx.send(Message::Log(trimmed.to_string()));
                 }
+            }
+
+            if use_elevation {
+                let _ = tx.send(Message::Log(
+                    "Note: progress may not update in real-time when using pkexec. Try running 'sudo flint' for full progress.".to_string()
+                ));
             }
 
             let success = child.wait().map(|s| s.success()).unwrap_or(false);
@@ -375,12 +416,16 @@ fn render_action_ui(ui: &mut egui::Ui, visuals: &egui::Visuals, app: &mut FlintA
                         app.cancel_flash();
                     }
                     ui.add_space(4.0);
-                    ui.add(
-                        egui::ProgressBar::new(app.progress)
-                            .show_percentage()
-                            .animate(true),
-                    );
-                    ui.label(&app.status);
+                    let bar = egui::ProgressBar::new(app.progress)
+                        .show_percentage()
+                        .animate(true);
+                    ui.add(bar);
+                    ui.horizontal(|ui| {
+                        if app.progress == 0.0 {
+                            ui.add(egui::Spinner::default());
+                        }
+                        ui.label(&app.status);
+                    });
                 } else {
                     let can_flash = !app.iso_path.is_empty() && !app.usb_devices.is_empty();
                     let btn = egui::Button::new(egui::RichText::new("Start flashing").size(16.0))
