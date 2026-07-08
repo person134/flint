@@ -267,8 +267,6 @@ impl eframe::App for FlintApp {
         ui.add_space(8.0);
 
         ui.vertical_centered(|ui| {
-            let box_width = 380.0;
-
             egui::Frame::default()
                 .fill(visuals.window_fill)
                 .corner_radius(egui::CornerRadius::same(4))
@@ -279,24 +277,22 @@ impl eframe::App for FlintApp {
                     });
                     ui.add_space(4.0);
                     ui.vertical_centered(|ui| {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(box_width, 24.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::TextEdit::singleline(&mut self.iso_path).desired_width(290.0));
-                                    if ui.button("Browse").clicked() {
-                                        if let Some(path) = FileDialog::new()
-                                            .add_filter("ISO", &["iso"])
-                                            .add_filter("All files", &["*"])
-                                            .pick_file()
-                                        {
-                                            self.iso_path = path.display().to_string();
-                                        }
-                                    }
-                                });
-                            },
-                        );
+                        ui.horizontal(|ui| {
+                            let full = ui.available_width();
+                            let pad = ((full - 290.0 - 10.0 - 75.0) / 2.0).max(0.0);
+                            ui.add_space(pad);
+                            ui.add(egui::TextEdit::singleline(&mut self.iso_path).desired_width(290.0));
+                            ui.add_space(10.0);
+                            if ui.button("Browse").clicked() {
+                                if let Some(path) = FileDialog::new()
+                                    .add_filter("ISO", &["iso"])
+                                    .add_filter("All files", &["*"])
+                                    .pick_file()
+                                {
+                                    self.iso_path = path.display().to_string();
+                                }
+                            }
+                        });
                     });
                 });
 
@@ -312,32 +308,31 @@ impl eframe::App for FlintApp {
                     });
                     ui.add_space(4.0);
                     ui.vertical_centered(|ui| {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(box_width, 24.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.horizontal(|ui| {
-                                    if self.usb_devices.is_empty() {
-                                        ui.label("No USB devices found");
-                                    } else {
-                                        egui::ComboBox::from_id_salt("usb_device")
-                                            .selected_text(self.usb_devices[self.selected_idx].label.as_str())
-                                            .show_ui(ui, |ui| {
-                                                for (i, dev) in self.usb_devices.iter().enumerate() {
-                                                    ui.selectable_value(
-                                                        &mut self.selected_idx,
-                                                        i,
-                                                        &dev.label,
-                                                    );
-                                                }
-                                            });
-                                    }
-                                    if ui.button("Refresh").clicked() {
-                                        self.refresh_devices();
-                                    }
-                                });
-                            },
-                        );
+                        ui.horizontal(|ui| {
+                            if self.usb_devices.is_empty() {
+                                ui.label("No USB devices found");
+                            } else {
+                                let full = ui.available_width();
+                                let pad = ((full - 290.0 - 10.0 - 75.0) / 2.0).max(0.0);
+                                ui.add_space(pad);
+                                egui::ComboBox::from_id_salt("usb_device")
+                                    .selected_text(self.usb_devices[self.selected_idx].label.as_str())
+                                    .width(290.0)
+                                    .show_ui(ui, |ui| {
+                                        for (i, dev) in self.usb_devices.iter().enumerate() {
+                                            ui.selectable_value(
+                                                &mut self.selected_idx,
+                                                i,
+                                                &dev.label,
+                                            );
+                                        }
+                                    });
+                                ui.add_space(10.0);
+                                if ui.button("Refresh").clicked() {
+                                    self.refresh_devices();
+                                }
+                            }
+                        });
                     });
                 });
         });
@@ -365,23 +360,21 @@ impl eframe::App for FlintApp {
                     self.start_flash();
                 }
             }
-        });
 
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(4.0);
-
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-            let term_btn = egui::Button::new(
-                egui::RichText::new(">_").monospace().size(14.0),
-            )
-            .min_size(egui::Vec2::new(30.0, 22.0));
-            if ui.add(term_btn).clicked() {
-                self.show_log = !self.show_log;
-            }
+            ui.add_space(4.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                let term_btn = egui::Button::new(
+                    egui::RichText::new(">_").monospace().size(14.0),
+                )
+                .min_size(egui::Vec2::new(30.0, 22.0));
+                if ui.add(term_btn).clicked() {
+                    self.show_log = !self.show_log;
+                }
+            });
         });
 
         if self.show_log {
+            ui.add_space(4.0);
             egui::Frame::default()
                 .fill(visuals.window_fill)
                 .corner_radius(egui::CornerRadius::same(4))
