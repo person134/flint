@@ -227,6 +227,128 @@ fn parse_dd_progress(line: &str) -> Option<u64> {
     }
 }
 
+fn render_action_ui(ui: &mut egui::Ui, visuals: &egui::Visuals, app: &mut FlintApp) {
+    egui::Frame::default()
+        .fill(visuals.window_fill)
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(12, 12))
+        .show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.strong("ISO File");
+            });
+            ui.add_space(4.0);
+            ui.vertical_centered(|ui| {
+                ui.horizontal(|ui| {
+                    let full = ui.available_width();
+                    let pad = ((full - 290.0 - 10.0 - 75.0) / 2.0).max(0.0);
+                    ui.add_space(pad);
+                    ui.add(egui::TextEdit::singleline(&mut app.iso_path).desired_width(290.0));
+                    ui.add_space(10.0);
+                    if ui.button("Browse").clicked() {
+                        if let Some(path) = FileDialog::new()
+                            .add_filter("ISO", &["iso"])
+                            .add_filter("All files", &["*"])
+                            .pick_file()
+                        {
+                            app.iso_path = path.display().to_string();
+                        }
+                    }
+                });
+            });
+
+            ui.add_space(10.0);
+
+            ui.vertical_centered(|ui| {
+                ui.strong("USB Device");
+            });
+            ui.add_space(4.0);
+            ui.vertical_centered(|ui| {
+                ui.horizontal(|ui| {
+                    if app.usb_devices.is_empty() {
+                        ui.label("No USB devices found");
+                    } else {
+                        let full = ui.available_width();
+                        let pad = ((full - 290.0 - 10.0 - 75.0) / 2.0).max(0.0);
+                        ui.add_space(pad);
+                        egui::ComboBox::from_id_salt("usb_device")
+                            .selected_text(app.usb_devices[app.selected_idx].label.as_str())
+                            .width(290.0)
+                            .show_ui(ui, |ui| {
+                                for (i, dev) in app.usb_devices.iter().enumerate() {
+                                    ui.selectable_value(
+                                        &mut app.selected_idx,
+                                        i,
+                                        &dev.label,
+                                    );
+                                }
+                            });
+                        ui.add_space(10.0);
+                        if ui.button("Refresh").clicked() {
+                            app.refresh_devices();
+                        }
+                    }
+                });
+            });
+
+            ui.add_space(10.0);
+
+            ui.vertical_centered(|ui| {
+                if app.flashing {
+                    if ui.button("Cancel").clicked() {
+                        app.cancel_flash();
+                    }
+                    ui.add_space(4.0);
+                    ui.add(
+                        egui::ProgressBar::new(app.progress)
+                            .show_percentage()
+                            .animate(true),
+                    );
+                    ui.label(&app.status);
+                } else {
+                    let can_flash = !app.iso_path.is_empty() && !app.usb_devices.is_empty();
+                    let btn = egui::Button::new(egui::RichText::new("Start flashing").size(16.0))
+                        .min_size(egui::Vec2::new(220.0, 42.0))
+                        .fill(visuals.selection.bg_fill);
+                    if ui.add_enabled(can_flash, btn).clicked() {
+                        app.start_flash();
+                    }
+                }
+
+                ui.add_space(4.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    let term_btn = egui::Button::new(
+                        egui::RichText::new(">_").monospace().size(14.0),
+                    )
+                    .min_size(egui::Vec2::new(30.0, 22.0));
+                    if ui.add(term_btn).clicked() {
+                        app.show_log = !app.show_log;
+                    }
+                });
+            });
+        });
+}
+
+fn render_log_ui(ui: &mut egui::Ui, visuals: &egui::Visuals, app: &mut FlintApp) {
+    egui::Frame::default()
+        .fill(visuals.window_fill)
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(12, 8))
+        .show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.strong("Log");
+            });
+            ui.add_space(4.0);
+            egui::ScrollArea::vertical()
+                .max_height(120.0)
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    for line in &app.log {
+                        ui.label(egui::RichText::new(line).monospace().size(11.0));
+                    }
+                });
+        });
+}
+
 impl eframe::App for FlintApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let visuals = if self.dark_mode {
@@ -236,8 +358,7 @@ impl eframe::App for FlintApp {
         };
         ui.ctx().set_visuals(visuals.clone());
 
-        let bg = visuals.panel_fill;
-        ui.painter().rect_filled(ui.max_rect(), 0.0, bg);
+        ui.painter().rect_filled(ui.max_rect(), 0.0, visuals.panel_fill);
 
         if let Some(rx) = &self.rx {
             while let Ok(msg) = rx.try_recv() {
@@ -266,129 +387,25 @@ impl eframe::App for FlintApp {
 
         ui.add_space(8.0);
 
-        ui.vertical_centered(|ui| {
-            egui::Frame::default()
-                .fill(visuals.window_fill)
-                .corner_radius(egui::CornerRadius::same(4))
-                .inner_margin(egui::Margin::symmetric(8, 8))
-                .show(ui, |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.strong("ISO File");
-                    });
-                    ui.add_space(4.0);
-                    ui.vertical_centered(|ui| {
-                        ui.horizontal(|ui| {
-                            let full = ui.available_width();
-                            let pad = ((full - 290.0 - 10.0 - 75.0) / 2.0).max(0.0);
-                            ui.add_space(pad);
-                            ui.add(egui::TextEdit::singleline(&mut self.iso_path).desired_width(290.0));
-                            ui.add_space(10.0);
-                            if ui.button("Browse").clicked() {
-                                if let Some(path) = FileDialog::new()
-                                    .add_filter("ISO", &["iso"])
-                                    .add_filter("All files", &["*"])
-                                    .pick_file()
-                                {
-                                    self.iso_path = path.display().to_string();
-                                }
-                            }
-                        });
-                    });
-                });
-
-            ui.add_space(6.0);
-
-            egui::Frame::default()
-                .fill(visuals.window_fill)
-                .corner_radius(egui::CornerRadius::same(4))
-                .inner_margin(egui::Margin::symmetric(8, 8))
-                .show(ui, |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.strong("USB Device");
-                    });
-                    ui.add_space(4.0);
-                    ui.vertical_centered(|ui| {
-                        ui.horizontal(|ui| {
-                            if self.usb_devices.is_empty() {
-                                ui.label("No USB devices found");
-                            } else {
-                                let full = ui.available_width();
-                                let pad = ((full - 290.0 - 10.0 - 75.0) / 2.0).max(0.0);
-                                ui.add_space(pad);
-                                egui::ComboBox::from_id_salt("usb_device")
-                                    .selected_text(self.usb_devices[self.selected_idx].label.as_str())
-                                    .width(290.0)
-                                    .show_ui(ui, |ui| {
-                                        for (i, dev) in self.usb_devices.iter().enumerate() {
-                                            ui.selectable_value(
-                                                &mut self.selected_idx,
-                                                i,
-                                                &dev.label,
-                                            );
-                                        }
-                                    });
-                                ui.add_space(10.0);
-                                if ui.button("Refresh").clicked() {
-                                    self.refresh_devices();
-                                }
-                            }
-                        });
-                    });
-                });
-        });
-
-        ui.add_space(8.0);
-
-        ui.vertical_centered(|ui| {
-            if self.flashing {
-                if ui.button("Cancel").clicked() {
-                    self.cancel_flash();
-                }
-                ui.add_space(4.0);
-                ui.add(
-                    egui::ProgressBar::new(self.progress)
-                        .show_percentage()
-                        .animate(true),
-                );
-                ui.label(&self.status);
-            } else {
-                let can_flash = !self.iso_path.is_empty() && !self.usb_devices.is_empty();
-                let btn = egui::Button::new(egui::RichText::new("Start flashing").size(16.0))
-                    .min_size(egui::Vec2::new(220.0, 42.0))
-                    .fill(visuals.selection.bg_fill);
-                if ui.add_enabled(can_flash, btn).clicked() {
-                    self.start_flash();
-                }
-            }
-
-            ui.add_space(4.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                let term_btn = egui::Button::new(
-                    egui::RichText::new(">_").monospace().size(14.0),
-                )
-                .min_size(egui::Vec2::new(30.0, 22.0));
-                if ui.add(term_btn).clicked() {
-                    self.show_log = !self.show_log;
-                }
-            });
-        });
-
         if self.show_log {
-            ui.add_space(4.0);
-            egui::Frame::default()
-                .fill(visuals.window_fill)
-                .corner_radius(egui::CornerRadius::same(4))
-                .inner_margin(egui::Margin::symmetric(6, 4))
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(120.0)
-                        .stick_to_bottom(true)
-                        .show(ui, |ui| {
-                            for line in &self.log {
-                                ui.label(egui::RichText::new(line).monospace().size(11.0));
-                            }
-                        });
-                });
+            ui.vertical_centered(|ui| {
+                render_action_ui(ui, &visuals, self);
+            });
+            ui.add_space(8.0);
+            ui.vertical_centered(|ui| {
+                render_log_ui(ui, &visuals, self);
+            });
+        } else {
+            let avail = egui::vec2(ui.available_width(), ui.available_height() - 8.0);
+            ui.allocate_ui_with_layout(
+                avail,
+                egui::Layout::top_down(egui::Align::Center).with_main_align(egui::Align::Center),
+                |ui| {
+                    ui.vertical_centered(|ui| {
+                        render_action_ui(ui, &visuals, self);
+                    });
+                },
+            );
         }
 
         if self.flashing {
