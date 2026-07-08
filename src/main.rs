@@ -249,11 +249,13 @@ fn box_fill_from(panel: egui::Color32) -> egui::Color32 {
 
 fn render_action_ui(ui: &mut egui::Ui, visuals: &egui::Visuals, app: &mut FlintApp) {
     let box_fill = box_fill_from(visuals.panel_fill);
+    let min_h = ui.available_height().max(200.0);
     egui::Frame::default()
         .fill(box_fill)
         .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(12, 12))
         .show(ui, |ui| {
+            ui.set_min_height(min_h);
             ui.vertical_centered(|ui| {
                 ui.strong("ISO File");
             });
@@ -351,11 +353,13 @@ fn render_action_ui(ui: &mut egui::Ui, visuals: &egui::Visuals, app: &mut FlintA
 
 fn render_log_ui(ui: &mut egui::Ui, visuals: &egui::Visuals, app: &mut FlintApp) {
     let box_fill = box_fill_from(visuals.panel_fill);
+    let min_h = ui.available_height().max(200.0);
     egui::Frame::default()
         .fill(box_fill)
         .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
+            ui.set_min_height(min_h);
             ui.vertical_centered(|ui| {
                 ui.strong("Log");
             });
@@ -407,32 +411,40 @@ impl eframe::App for FlintApp {
         }
 
         if self.show_log {
-            let avail = ui.available_size();
-            let action_w = 420.0;
-            let log_w = (avail.x - action_w - 24.0).max(200.0);
-            ui.add_space(8.0);
+            let aw = ui.available_width();
+            let ah = ui.available_height();
+            let gap = 8.0;
+            let half = (aw - gap) / 2.0 - gap;
+            let bh = ah - gap;
+            ui.add_space(gap);
             ui.horizontal(|ui| {
+                ui.add_space(gap);
                 ui.allocate_ui_with_layout(
-                    egui::vec2(action_w, ui.available_height()),
+                    egui::vec2(half, bh),
                     egui::Layout::top_down(egui::Align::Center),
                     |ui| render_action_ui(ui, &visuals, self),
                 );
-                ui.add_space(8.0);
+                ui.add_space(gap);
                 ui.allocate_ui_with_layout(
-                    egui::vec2(log_w, ui.available_height()),
+                    egui::vec2(half, bh),
                     egui::Layout::top_down(egui::Align::Center),
                     |ui| render_log_ui(ui, &visuals, self),
                 );
             });
         } else {
-            egui::Area::new(egui::Id::new("action_center"))
-                .anchor(egui::Align2::CENTER_CENTER, (0.0, -8.0))
-                .show(ui.ctx(), |ui| {
-                    ui.set_max_width(500.0);
-                    ui.vertical_centered(|ui| {
-                        render_action_ui(ui, &visuals, self);
-                    });
-                });
+            let aw = ui.available_width();
+            let ah = ui.available_height();
+            let bw = aw - 16.0;
+            let bh = ah - 8.0;
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(bw, bh),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| render_action_ui(ui, &visuals, self),
+                );
+            });
         }
 
         if self.flashing {
