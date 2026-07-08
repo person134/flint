@@ -47,6 +47,51 @@ struct FlintApp {
     cancel: Arc<AtomicBool>,
 }
 
+fn detect_system_theme() -> egui::Theme {
+    let home = std::env::var("HOME").unwrap_or_default();
+
+    if let Ok(output) = Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "color-scheme"])
+        .output()
+    {
+        let s = String::from_utf8_lossy(&output.stdout);
+        if s.contains("prefer-dark") {
+            return egui::Theme::Dark;
+        }
+        if let Ok(output) = Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "gtk-theme"])
+            .output()
+        {
+            let t = String::from_utf8_lossy(&output.stdout).to_lowercase();
+            if t.contains("dark") || t.contains("night") {
+                return egui::Theme::Dark;
+            }
+        }
+    }
+
+    if let Ok(content) = std::fs::read_to_string(format!("{}/.config/kdeglobals", home)) {
+        if content.to_lowercase().contains("colorscheme=") {
+            for line in content.lines() {
+                if let Some(name) = line.strip_prefix("ColorScheme=") {
+                    if name.to_lowercase().contains("dark") {
+                        return egui::Theme::Dark;
+                    }
+                }
+            }
+        }
+    }
+
+    for path in &[".config/gtk-3.0/settings.ini", ".config/gtk-4.0/settings.ini"] {
+        if let Ok(content) = std::fs::read_to_string(format!("{}/{}", home, path)) {
+            if content.contains("gtk-application-prefer-dark-theme=1") {
+                return egui::Theme::Dark;
+            }
+        }
+    }
+
+    egui::Theme::Light
+}
+
 impl FlintApp {
     fn new() -> Self {
         let devices = Self::detect_usb_devices();
@@ -65,10 +110,10 @@ impl FlintApp {
 
     fn detect_usb_devices() -> Vec<UsbDevice> {
         let mut devices = Vec::new();
-        let output = Command::new("lsblk")
+        if let Ok(output) = Command::new("lsblk")
             .args(["-d", "-o", "NAME,SIZE,MODEL,TRAN", "-J"])
-            .output();
-        if let Ok(output) = output {
+            .output()
+        {
             if let Ok(parsed) = serde_json::from_slice::<LsblkDevices>(&output.stdout) {
                 for dev in parsed.blockdevices {
                     if dev.tran.as_deref() == Some("usb") {
@@ -205,78 +250,99 @@ impl eframe::App for FlintApp {
             }
         }
 
-        ui.heading("flint");
+        ui.vertical_centered(|ui| {
+            ui.heading(egui::RichText::new("flint").size(20.0));
+        });
         ui.separator();
+        ui.add_space(4.0);
 
-        ui.horizontal(|ui| {
-            ui.label("ISO File:");
-            ui.add(egui::TextEdit::singleline(&mut self.iso_path).desired_width(260.0));
-            if ui.button("Browse").clicked() {
-                if let Some(path) = FileDialog::new()
-                    .add_filter("ISO", &["iso"])
-                    .add_filter("All files", &["*"])
-                    .pick_file()
-                {
-                    self.iso_path = path.display().to_string();
+        egui::Frame::default()
+            .fill(ui.style().visuals.window_fill())
+            .corner_radius(egui::CornerRadius::same(4))
+            .inner_margin(egui::Margin::symmetric(8, 8))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("ISO File:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.iso_path).desired_width(240.0),
+                    );
+                    if ui.button("Browse").clicked() {
+                        if let Some(path) = FileDialog::new()
+                            .add_filter("ISO", &["iso"])
+                            .add_filter("All files", &["*"])
+                            .pick_file()
+                        {
+                            self.iso_path = path.display().to_string();
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("USB Device:");
+                    if self.usb_devices.is_empty() {
+                        ui.label("No USB devices found");
+                    } else {
+                        egui::ComboBox::from_id_salt("usb_device")
+                            .selected_text(self.usb_devices[self.selected_idx].label.as_str())
+                            .show_ui(ui, |ui| {
+                                for (i, dev) in self.usb_devices.iter().enumerate() {
+                                    ui.selectable_value(
+                                        &mut self.selected_idx,
+                                        i,
+                                        &dev.label,
+                                    );
+                                }
+                            });
+                    }
+                    if ui.button("Refresh").clicked() {
+                        self.refresh_devices();
+                    }
+                });
+            });
+
+        ui.add_space(8.0);
+
+        ui.vertical_centered(|ui| {
+            if self.flashing {
+                if ui.button("Cancel").clicked() {
+                    self.cancel_flash();
+                }
+                ui.add_space(4.0);
+                ui.add(
+                    egui::ProgressBar::new(self.progress)
+                        .show_percentage()
+                        .animate(true),
+                );
+                ui.label(&self.status);
+            } else {
+                let can_flash = !self.iso_path.is_empty() && !self.usb_devices.is_empty();
+                let btn = egui::Button::new(egui::RichText::new("Start flashing").size(16.0))
+                    .min_size(egui::Vec2::new(220.0, 42.0))
+                    .fill(ui.style().visuals.selection.bg_fill);
+                if ui.add_enabled(can_flash, btn).clicked() {
+                    self.start_flash();
                 }
             }
         });
 
-        ui.horizontal(|ui| {
-            ui.label("USB Device:");
-            if self.usb_devices.is_empty() {
-                ui.label("No USB devices found");
-            } else {
-                egui::ComboBox::from_id_salt("usb_device")
-                    .selected_text(self.usb_devices[self.selected_idx].label.as_str())
-                    .show_ui(ui, |ui| {
-                        for (i, dev) in self.usb_devices.iter().enumerate() {
-                            ui.selectable_value(&mut self.selected_idx, i, &dev.label);
-                        }
-                    });
-            }
-            if ui.button("Refresh").clicked() {
-                self.refresh_devices();
-            }
-        });
-
-        ui.colored_label(
-            egui::Color32::RED,
-            "Warning: double check the device before flashing. Data will be overwritten.",
-        );
-
+        ui.add_space(8.0);
         ui.separator();
-
-        if self.flashing {
-            if ui.button("Cancel").clicked() {
-                self.cancel_flash();
-            }
-            ui.add(
-                egui::ProgressBar::new(self.progress)
-                    .show_percentage()
-                    .animate(self.progress < 1.0),
-            );
-        } else {
-            let can_flash = !self.iso_path.is_empty() && !self.usb_devices.is_empty();
-            if ui
-                .add_enabled(can_flash, egui::Button::new("Start flashing"))
-                .clicked()
-            {
-                self.start_flash();
-            }
-        }
-        ui.label(&self.status);
-
-        ui.separator();
+        ui.add_space(4.0);
 
         ui.label("Log:");
-        egui::ScrollArea::vertical()
-            .max_height(180.0)
-            .stick_to_bottom(true)
+        egui::Frame::default()
+            .fill(ui.style().visuals.window_fill())
+            .corner_radius(egui::CornerRadius::same(4))
+            .inner_margin(egui::Margin::symmetric(6, 4))
             .show(ui, |ui| {
-                for line in &self.log {
-                    ui.label(line);
-                }
+                egui::ScrollArea::vertical()
+                    .max_height(120.0)
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        for line in &self.log {
+                            ui.label(egui::RichText::new(line).monospace().size(11.0));
+                        }
+                    });
             });
 
         if self.flashing {
@@ -286,6 +352,7 @@ impl eframe::App for FlintApp {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let is_dark = detect_system_theme() == egui::Theme::Dark;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([520.0, 440.0]),
@@ -294,7 +361,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eframe::run_native(
         "flint",
         options,
-        Box::new(|_cc| Ok(Box::new(FlintApp::new()))),
+        Box::new(|cc| {
+            cc.egui_ctx.set_visuals(if is_dark {
+                egui::Visuals::dark()
+            } else {
+                egui::Visuals::light()
+            });
+            Ok(Box::new(FlintApp::new()))
+        }),
     )?;
     Ok(())
 }
