@@ -385,9 +385,8 @@ impl eframe::App for FlintApp {
             }
         }
 
-        ui.add_space(8.0);
-
         if self.show_log {
+            ui.add_space(8.0);
             ui.vertical_centered(|ui| {
                 render_action_ui(ui, &visuals, self);
             });
@@ -396,16 +395,13 @@ impl eframe::App for FlintApp {
                 render_log_ui(ui, &visuals, self);
             });
         } else {
-            let avail = egui::vec2(ui.available_width(), ui.available_height() - 8.0);
-            ui.allocate_ui_with_layout(
-                avail,
-                egui::Layout::top_down(egui::Align::Center).with_main_align(egui::Align::Center),
-                |ui| {
+            egui::Area::new(egui::Id::new("action_center"))
+                .anchor(egui::Align2::CENTER_CENTER, (0.0, -8.0))
+                .show(ui.ctx(), |ui| {
                     ui.vertical_centered(|ui| {
                         render_action_ui(ui, &visuals, self);
                     });
-                },
-            );
+                });
         }
 
         if self.flashing {
