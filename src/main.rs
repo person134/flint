@@ -50,6 +50,7 @@ struct FlintApp {
     show_log: bool,
     show_dialog: bool,
     dialog_message: String,
+    icon_set: bool,
 }
 
 fn detect_is_dark() -> bool {
@@ -114,6 +115,7 @@ impl FlintApp {
             show_log: false,
             show_dialog: false,
             dialog_message: String::new(),
+            icon_set: false,
         }
     }
 
@@ -484,6 +486,21 @@ impl eframe::App for FlintApp {
 
         ui.painter().rect_filled(ui.max_rect(), 0.0, visuals.panel_fill);
 
+        if !self.icon_set {
+            self.icon_set = true;
+            let png = include_bytes!("../flint-icon.png");
+            if let Ok(img) = image::load_from_memory(png) {
+                let rgba = img.to_rgba8();
+                let (w, h) = rgba.dimensions();
+                let icon = egui::IconData {
+                    rgba: rgba.into_raw(),
+                    width: w,
+                    height: h,
+                };
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(icon))));
+            }
+        }
+
         if let Some(rx) = &self.rx {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
@@ -583,27 +600,11 @@ impl eframe::App for FlintApp {
     }
 }
 
-fn load_icon() -> Option<egui::IconData> {
-    let png = include_bytes!("../flint-icon.png");
-    let img = image::load_from_memory(png).ok()?;
-    let rgba = img.to_rgba8();
-    let (width, height) = rgba.dimensions();
-    Some(egui::IconData {
-        rgba: rgba.into_raw(),
-        width,
-        height,
-    })
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let is_dark = detect_is_dark();
-    let icon = load_icon();
-    let mut viewport = egui::ViewportBuilder::default().with_inner_size([720.0, 400.0]);
-    if let Some(icon) = icon {
-        viewport = viewport.with_icon(icon);
-    }
     let options = eframe::NativeOptions {
-        viewport,
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([720.0, 400.0]),
         ..Default::default()
     };
     eframe::run_native(
