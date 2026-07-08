@@ -195,10 +195,9 @@ impl FlintApp {
             )));
 
             let mut child;
-            let use_elevation;
+
 
             if root {
-                use_elevation = false;
                 child = match Command::new("dd")
                     .arg(format!("if={}", iso_path))
                     .arg(format!("of={}", dev_path))
@@ -215,14 +214,14 @@ impl FlintApp {
                     }
                 };
             } else {
-                use_elevation = true;
+                let cmd = format!(
+                    "dd if='{}' of='{}' bs=4M status=progress conv=fsync",
+                    iso_path, dev_path
+                );
                 child = match Command::new("pkexec")
-                    .arg("dd")
-                    .arg(format!("if={}", iso_path))
-                    .arg(format!("of={}", dev_path))
-                    .args(["bs=4M", "status=progress", "conv=fsync"])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::piped())
+                    .args(["script", "-q", "-f", "-c", &cmd, "/dev/stdout"])
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
                     .spawn()
                 {
                     Ok(c) => c,
@@ -234,7 +233,11 @@ impl FlintApp {
                 };
             }
 
-            let mut stderr = child.stderr.take().expect("stderr not captured");
+            let mut out_pipe: Box<dyn Read + Send> = if root {
+                Box::new(child.stderr.take().expect("stderr not captured"))
+            } else {
+                Box::new(child.stdout.take().expect("stdout not captured"))
+            };
             let mut buf = vec![0u8; 4096];
             let mut acc = Vec::new();
 
@@ -247,7 +250,7 @@ impl FlintApp {
                     return;
                 }
 
-                let n = stderr.read(&mut buf).unwrap_or(0);
+                let n = out_pipe.read(&mut buf).unwrap_or(0);
                 if n == 0 {
                     break;
                 }
@@ -288,12 +291,6 @@ impl FlintApp {
                     }
                     let _ = tx.send(Message::Log(trimmed.to_string()));
                 }
-            }
-
-            if use_elevation {
-                let _ = tx.send(Message::Log(
-                    "Note: progress may not update in real-time when using pkexec. Try running 'sudo flint' for full progress.".to_string()
-                ));
             }
 
             let success = child.wait().map(|s| s.success()).unwrap_or(false);
