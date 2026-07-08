@@ -51,6 +51,7 @@ struct FlintApp {
     show_dialog: bool,
     dialog_message: String,
     icon_set: bool,
+    desktop_setup_done: bool,
 }
 
 fn detect_is_dark() -> bool {
@@ -116,32 +117,53 @@ impl FlintApp {
             show_dialog: false,
             dialog_message: String::new(),
             icon_set: false,
+            desktop_setup_done: false,
         }
     }
 
     fn detect_usb_devices() -> Vec<UsbDevice> {
         let mut devices = Vec::new();
-        if let Ok(output) = Command::new("lsblk")
-            .args(["-d", "-o", "NAME,SIZE,MODEL,TRAN", "-J"])
+
+        let output = match Command::new("lsblk")
+            .args(["-Jpo", "name,size,model,tran"])
             .output()
         {
-            if let Ok(parsed) = serde_json::from_slice::<LsblkDevices>(&output.stdout) {
-                for dev in parsed.blockdevices {
-                    if dev.tran.as_deref() == Some("usb") {
-                        let model = dev.model.as_deref().unwrap_or("Unknown").trim();
-                        let path = format!("/dev/{}", dev.name);
-                        let label = format!("{} - {} - {}", dev.name, dev.size, model);
-                        devices.push(UsbDevice { path, label });
-                    }
-                }
+            Ok(o) => o,
+            Err(_) => return devices,
+        };
+
+        let parsed: LsblkDevices = match serde_json::from_slice(&output.stdout) {
+            Ok(d) => d,
+            Err(_) => return devices,
+        };
+
+        for dev in &parsed.blockdevices {
+            let is_usb = dev.tran.as_deref() == Some("usb");
+            let is_disk = dev.name.starts_with("/dev/sd")
+                || dev.name.starts_with("/dev/nvme")
+                || dev.name.starts_with("/dev/mmcblk");
+            if !is_usb || !is_disk {
+                continue;
             }
+            let label = if let Some(model) = &dev.model {
+                format!("{} ({} - {})", dev.name, model.trim(), dev.size)
+            } else {
+                format!("{} ({})", dev.name, dev.size)
+            };
+            devices.push(UsbDevice {
+                path: dev.name.clone(),
+                label,
+            });
         }
+
         devices
     }
 
     fn refresh_devices(&mut self) {
         self.usb_devices = Self::detect_usb_devices();
-        self.selected_idx = self.selected_idx.min(self.usb_devices.len().saturating_sub(1));
+        if self.selected_idx >= self.usb_devices.len() {
+            self.selected_idx = self.usb_devices.len().saturating_sub(1);
+        }
     }
 
     fn is_root() -> bool {
@@ -201,7 +223,6 @@ impl FlintApp {
             )));
 
             let mut child;
-
 
             if root {
                 child = match Command::new("dd")
@@ -307,6 +328,47 @@ impl FlintApp {
     fn cancel_flash(&mut self) {
         self.cancel.store(true, Ordering::SeqCst);
         self.status = "Cancelling...".to_string();
+    }
+
+    fn setup_desktop_integration() {
+        let home = match std::env::var("HOME") {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+
+        let png_128 = include_bytes!("../icon-128.png");
+
+        let dirs = ["16x16", "32x32", "48x48", "64x64", "128x128"];
+        for dir in &dirs {
+            let path = format!("{}/.local/share/icons/hicolor/{}/apps", home, dir);
+            let _ = std::fs::create_dir_all(&path);
+            let file_path = format!("{}/flint.png", path);
+            if !std::path::Path::new(&file_path).exists() {
+                let _ = std::fs::write(&file_path, png_128);
+            }
+        }
+
+        let apps_dir = format!("{}/.local/share/applications", home);
+        let _ = std::fs::create_dir_all(&apps_dir);
+        let desktop_path = format!("{}/flint.desktop", apps_dir);
+        if !std::path::Path::new(&desktop_path).exists() {
+            let bin_path = std::env::current_exe()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "flint".to_string());
+            let desktop = format!(
+                "[Desktop Entry]\n\
+                 Type=Application\n\
+                 Name=flint\n\
+                 Comment=Flash ISO files to USB drives\n\
+                 Exec={}\n\
+                 Icon=flint\n\
+                 Terminal=false\n\
+                 Categories=Utility;X-GNOME-Utilities;\n\
+                 StartupWMClass=flint\n",
+                bin_path
+            );
+            let _ = std::fs::write(&desktop_path, desktop);
+        }
     }
 }
 
@@ -458,13 +520,9 @@ fn render_log_ui(ui: &mut egui::Ui, visuals: &egui::Visuals, app: &mut FlintApp)
     egui::Frame::default()
         .fill(box_fill)
         .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(egui::Margin::same(12))
+        .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.set_min_height(ui.available_height());
-            ui.vertical_centered(|ui| {
-                ui.strong("Log");
-            });
-            ui.add_space(4.0);
             egui::ScrollArea::vertical()
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
@@ -485,6 +543,11 @@ impl eframe::App for FlintApp {
         ui.ctx().set_visuals(visuals.clone());
 
         ui.painter().rect_filled(ui.max_rect(), 0.0, visuals.panel_fill);
+
+        if !self.desktop_setup_done {
+            self.desktop_setup_done = true;
+            Self::setup_desktop_integration();
+        }
 
         if !self.icon_set {
             self.icon_set = true;
