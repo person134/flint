@@ -170,7 +170,8 @@ impl FlintApp {
                 return;
             }
 
-            let mut child = match Command::new("dd")
+            let mut child = match Command::new("pkexec")
+                .arg("dd")
                 .arg(format!("if={}", iso_path))
                 .arg(format!("of={}", dev_path))
                 .args(["bs=4M", "status=progress", "conv=fsync"])
@@ -180,7 +181,7 @@ impl FlintApp {
             {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = tx.send(Message::Log(format!("Failed to start dd: {}", e)));
+                    let _ = tx.send(Message::Log(format!("Failed to start dd via pkexec: {}", e)));
                     let _ = tx.send(Message::Done(false));
                     return;
                 }
