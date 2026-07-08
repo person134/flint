@@ -48,6 +48,8 @@ struct FlintApp {
     cancel: Arc<AtomicBool>,
     dark_mode: bool,
     show_log: bool,
+    show_dialog: bool,
+    dialog_message: String,
 }
 
 fn detect_is_dark() -> bool {
@@ -110,6 +112,8 @@ impl FlintApp {
             cancel: Arc::new(AtomicBool::new(false)),
             dark_mode: detect_is_dark(),
             show_log: false,
+            show_dialog: false,
+            dialog_message: String::new(),
         }
     }
 
@@ -495,10 +499,13 @@ impl eframe::App for FlintApp {
                         if success {
                             self.status = "Done!".to_string();
                             self.log.push("Flash completed successfully.".to_string());
+                            self.dialog_message = "Flash completed successfully!".to_string();
                         } else {
                             self.status = "Failed!".to_string();
                             self.log.push("Flash failed or was cancelled.".to_string());
+                            self.dialog_message = "Flash failed!\nCheck the log for more information.".to_string();
                         }
+                        self.show_dialog = true;
                     }
                     Message::Log(line) => {
                         self.log.push(line);
@@ -548,6 +555,30 @@ impl eframe::App for FlintApp {
 
         if self.flashing {
             ui.ctx().request_repaint();
+        }
+
+        if self.show_dialog {
+            let ctx = ui.ctx();
+            egui::Area::new("flash_done_dialog".into())
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    let frame = egui::Frame::default()
+                        .fill(ui.visuals().window_fill())
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::symmetric(24, 16));
+                    frame.show(ui, |ui| {
+                        ui.set_min_width(280.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(egui::RichText::new(&self.dialog_message).size(14.0));
+                        });
+                        ui.add_space(12.0);
+                        ui.vertical_centered(|ui| {
+                            if ui.button("OK").clicked() {
+                                self.show_dialog = false;
+                            }
+                        });
+                    });
+                });
         }
     }
 }
