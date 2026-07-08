@@ -46,6 +46,7 @@ struct FlintApp {
     rx: Option<mpsc::Receiver<Message>>,
     cancel: Arc<AtomicBool>,
     dark_mode: bool,
+    show_log: bool,
 }
 
 fn detect_is_dark() -> bool {
@@ -107,6 +108,7 @@ impl FlintApp {
             rx: None,
             cancel: Arc::new(AtomicBool::new(false)),
             dark_mode: detect_is_dark(),
+            show_log: false,
         }
     }
 
@@ -270,19 +272,23 @@ impl eframe::App for FlintApp {
                 .corner_radius(egui::CornerRadius::same(4))
                 .inner_margin(egui::Margin::symmetric(8, 8))
                 .show(ui, |ui| {
-                    ui.strong("ISO File");
+                    ui.vertical_centered(|ui| {
+                        ui.strong("ISO File");
+                    });
                     ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(&mut self.iso_path).desired_width(340.0));
-                        if ui.button("Browse").clicked() {
-                            if let Some(path) = FileDialog::new()
-                                .add_filter("ISO", &["iso"])
-                                .add_filter("All files", &["*"])
-                                .pick_file()
-                            {
-                                self.iso_path = path.display().to_string();
+                    ui.vertical_centered(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.add(egui::TextEdit::singleline(&mut self.iso_path).desired_width(340.0));
+                            if ui.button("Browse").clicked() {
+                                if let Some(path) = FileDialog::new()
+                                    .add_filter("ISO", &["iso"])
+                                    .add_filter("All files", &["*"])
+                                    .pick_file()
+                                {
+                                    self.iso_path = path.display().to_string();
+                                }
                             }
-                        }
+                        });
                     });
                 });
 
@@ -293,27 +299,31 @@ impl eframe::App for FlintApp {
                 .corner_radius(egui::CornerRadius::same(4))
                 .inner_margin(egui::Margin::symmetric(8, 8))
                 .show(ui, |ui| {
-                    ui.strong("USB Device");
+                    ui.vertical_centered(|ui| {
+                        ui.strong("USB Device");
+                    });
                     ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        if self.usb_devices.is_empty() {
-                            ui.label("No USB devices found");
-                        } else {
-                            egui::ComboBox::from_id_salt("usb_device")
-                                .selected_text(self.usb_devices[self.selected_idx].label.as_str())
-                                .show_ui(ui, |ui| {
-                                    for (i, dev) in self.usb_devices.iter().enumerate() {
-                                        ui.selectable_value(
-                                            &mut self.selected_idx,
-                                            i,
-                                            &dev.label,
-                                        );
-                                    }
-                                });
-                        }
-                        if ui.button("Refresh").clicked() {
-                            self.refresh_devices();
-                        }
+                    ui.vertical_centered(|ui| {
+                        ui.horizontal(|ui| {
+                            if self.usb_devices.is_empty() {
+                                ui.label("No USB devices found");
+                            } else {
+                                egui::ComboBox::from_id_salt("usb_device")
+                                    .selected_text(self.usb_devices[self.selected_idx].label.as_str())
+                                    .show_ui(ui, |ui| {
+                                        for (i, dev) in self.usb_devices.iter().enumerate() {
+                                            ui.selectable_value(
+                                                &mut self.selected_idx,
+                                                i,
+                                                &dev.label,
+                                            );
+                                        }
+                                    });
+                            }
+                            if ui.button("Refresh").clicked() {
+                                self.refresh_devices();
+                            }
+                        });
                     });
                 });
         });
@@ -347,21 +357,35 @@ impl eframe::App for FlintApp {
         ui.separator();
         ui.add_space(4.0);
 
-        ui.label("Log:");
-        egui::Frame::default()
-            .fill(visuals.window_fill)
-            .corner_radius(egui::CornerRadius::same(4))
-            .inner_margin(egui::Margin::symmetric(6, 4))
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(120.0)
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        for line in &self.log {
-                            ui.label(egui::RichText::new(line).monospace().size(11.0));
-                        }
-                    });
-            });
+        ui.horizontal(|ui| {
+            let term_btn = egui::Button::new(
+                egui::RichText::new(">_").monospace().size(14.0),
+            )
+            .min_size(egui::Vec2::new(30.0, 22.0));
+            if ui.add(term_btn).clicked() {
+                self.show_log = !self.show_log;
+            }
+            if self.show_log {
+                ui.label("Log:");
+            }
+        });
+
+        if self.show_log {
+            egui::Frame::default()
+                .fill(visuals.window_fill)
+                .corner_radius(egui::CornerRadius::same(4))
+                .inner_margin(egui::Margin::symmetric(6, 4))
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(120.0)
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            for line in &self.log {
+                                ui.label(egui::RichText::new(line).monospace().size(11.0));
+                            }
+                        });
+                });
+        }
 
         if self.flashing {
             ui.ctx().request_repaint();
