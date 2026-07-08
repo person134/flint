@@ -212,15 +212,6 @@ impl FlintApp {
         self.cancel.store(true, Ordering::SeqCst);
         self.status = "Cancelling...".to_string();
     }
-
-    fn toggle_theme(&mut self, ctx: &egui::Context) {
-        self.dark_mode = !self.dark_mode;
-        if self.dark_mode {
-            ctx.set_visuals(egui::Visuals::dark());
-        } else {
-            ctx.set_visuals(egui::Visuals::light());
-        }
-    }
 }
 
 fn parse_dd_progress(line: &str) -> Option<u64> {
@@ -236,12 +227,15 @@ fn parse_dd_progress(line: &str) -> Option<u64> {
 
 impl eframe::App for FlintApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-            let label = if self.dark_mode { "dark" } else { "light" };
-            if ui.button(label).clicked() {
-                self.toggle_theme(ui.ctx());
-            }
-        });
+        let visuals = if self.dark_mode {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        };
+        ui.ctx().set_visuals(visuals.clone());
+
+        let bg = visuals.panel_fill;
+        ui.painter().rect_filled(ui.max_rect(), 0.0, bg);
 
         if let Some(rx) = &self.rx {
             while let Ok(msg) = rx.try_recv() {
@@ -268,61 +262,61 @@ impl eframe::App for FlintApp {
             }
         }
 
-        ui.add_space(4.0);
+        ui.add_space(8.0);
 
-        egui::Frame::default()
-            .fill(ui.style().visuals.window_fill())
-            .corner_radius(egui::CornerRadius::same(4))
-            .inner_margin(egui::Margin::symmetric(8, 8))
-            .show(ui, |ui| {
-                ui.strong("ISO File");
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.iso_path).desired_width(340.0),
-                    );
-                    if ui.button("Browse").clicked() {
-                        if let Some(path) = FileDialog::new()
-                            .add_filter("ISO", &["iso"])
-                            .add_filter("All files", &["*"])
-                            .pick_file()
-                        {
-                            self.iso_path = path.display().to_string();
+        ui.vertical_centered(|ui| {
+            egui::Frame::default()
+                .fill(visuals.window_fill)
+                .corner_radius(egui::CornerRadius::same(4))
+                .inner_margin(egui::Margin::symmetric(8, 8))
+                .show(ui, |ui| {
+                    ui.strong("ISO File");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add(egui::TextEdit::singleline(&mut self.iso_path).desired_width(340.0));
+                        if ui.button("Browse").clicked() {
+                            if let Some(path) = FileDialog::new()
+                                .add_filter("ISO", &["iso"])
+                                .add_filter("All files", &["*"])
+                                .pick_file()
+                            {
+                                self.iso_path = path.display().to_string();
+                            }
                         }
-                    }
+                    });
                 });
-            });
 
-        ui.add_space(6.0);
+            ui.add_space(6.0);
 
-        egui::Frame::default()
-            .fill(ui.style().visuals.window_fill())
-            .corner_radius(egui::CornerRadius::same(4))
-            .inner_margin(egui::Margin::symmetric(8, 8))
-            .show(ui, |ui| {
-                ui.strong("USB Device");
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if self.usb_devices.is_empty() {
-                        ui.label("No USB devices found");
-                    } else {
-                        egui::ComboBox::from_id_salt("usb_device")
-                            .selected_text(self.usb_devices[self.selected_idx].label.as_str())
-                            .show_ui(ui, |ui| {
-                                for (i, dev) in self.usb_devices.iter().enumerate() {
-                                    ui.selectable_value(
-                                        &mut self.selected_idx,
-                                        i,
-                                        &dev.label,
-                                    );
-                                }
-                            });
-                    }
-                    if ui.button("Refresh").clicked() {
-                        self.refresh_devices();
-                    }
+            egui::Frame::default()
+                .fill(visuals.window_fill)
+                .corner_radius(egui::CornerRadius::same(4))
+                .inner_margin(egui::Margin::symmetric(8, 8))
+                .show(ui, |ui| {
+                    ui.strong("USB Device");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if self.usb_devices.is_empty() {
+                            ui.label("No USB devices found");
+                        } else {
+                            egui::ComboBox::from_id_salt("usb_device")
+                                .selected_text(self.usb_devices[self.selected_idx].label.as_str())
+                                .show_ui(ui, |ui| {
+                                    for (i, dev) in self.usb_devices.iter().enumerate() {
+                                        ui.selectable_value(
+                                            &mut self.selected_idx,
+                                            i,
+                                            &dev.label,
+                                        );
+                                    }
+                                });
+                        }
+                        if ui.button("Refresh").clicked() {
+                            self.refresh_devices();
+                        }
+                    });
                 });
-            });
+        });
 
         ui.add_space(8.0);
 
@@ -342,7 +336,7 @@ impl eframe::App for FlintApp {
                 let can_flash = !self.iso_path.is_empty() && !self.usb_devices.is_empty();
                 let btn = egui::Button::new(egui::RichText::new("Start flashing").size(16.0))
                     .min_size(egui::Vec2::new(220.0, 42.0))
-                    .fill(ui.style().visuals.selection.bg_fill);
+                    .fill(visuals.selection.bg_fill);
                 if ui.add_enabled(can_flash, btn).clicked() {
                     self.start_flash();
                 }
@@ -355,7 +349,7 @@ impl eframe::App for FlintApp {
 
         ui.label("Log:");
         egui::Frame::default()
-            .fill(ui.style().visuals.window_fill())
+            .fill(visuals.window_fill)
             .corner_radius(egui::CornerRadius::same(4))
             .inner_margin(egui::Margin::symmetric(6, 4))
             .show(ui, |ui| {
