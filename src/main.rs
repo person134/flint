@@ -45,6 +45,7 @@ struct FlintApp {
     log: Vec<String>,
     rx: Option<mpsc::Receiver<Message>>,
     cancel: Arc<AtomicBool>,
+    dark_mode: bool,
 }
 
 fn detect_is_dark() -> bool {
@@ -105,6 +106,7 @@ impl FlintApp {
             log: vec!["flint ready".to_string()],
             rx: None,
             cancel: Arc::new(AtomicBool::new(false)),
+            dark_mode: detect_is_dark(),
         }
     }
 
@@ -210,6 +212,15 @@ impl FlintApp {
         self.cancel.store(true, Ordering::SeqCst);
         self.status = "Cancelling...".to_string();
     }
+
+    fn toggle_theme(&mut self, ctx: &egui::Context) {
+        self.dark_mode = !self.dark_mode;
+        if self.dark_mode {
+            ctx.set_visuals(egui::Visuals::dark());
+        } else {
+            ctx.set_visuals(egui::Visuals::light());
+        }
+    }
 }
 
 fn parse_dd_progress(line: &str) -> Option<u64> {
@@ -225,6 +236,13 @@ fn parse_dd_progress(line: &str) -> Option<u64> {
 
 impl eframe::App for FlintApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+            let label = if self.dark_mode { "dark" } else { "light" };
+            if ui.button(label).clicked() {
+                self.toggle_theme(ui.ctx());
+            }
+        });
+
         if let Some(rx) = &self.rx {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
@@ -250,10 +268,6 @@ impl eframe::App for FlintApp {
             }
         }
 
-        ui.vertical_centered(|ui| {
-            ui.heading(egui::RichText::new("flint").size(20.0));
-        });
-        ui.separator();
         ui.add_space(4.0);
 
         egui::Frame::default()
@@ -261,10 +275,11 @@ impl eframe::App for FlintApp {
             .corner_radius(egui::CornerRadius::same(4))
             .inner_margin(egui::Margin::symmetric(8, 8))
             .show(ui, |ui| {
+                ui.strong("ISO File");
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label("ISO File:");
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.iso_path).desired_width(240.0),
+                        egui::TextEdit::singleline(&mut self.iso_path).desired_width(340.0),
                     );
                     if ui.button("Browse").clicked() {
                         if let Some(path) = FileDialog::new()
@@ -276,9 +291,18 @@ impl eframe::App for FlintApp {
                         }
                     }
                 });
+            });
+
+        ui.add_space(6.0);
+
+        egui::Frame::default()
+            .fill(ui.style().visuals.window_fill())
+            .corner_radius(egui::CornerRadius::same(4))
+            .inner_margin(egui::Margin::symmetric(8, 8))
+            .show(ui, |ui| {
+                ui.strong("USB Device");
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label("USB Device:");
                     if self.usb_devices.is_empty() {
                         ui.label("No USB devices found");
                     } else {
@@ -352,6 +376,7 @@ impl eframe::App for FlintApp {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let is_dark = detect_is_dark();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([520.0, 440.0]),
@@ -361,7 +386,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "flint",
         options,
         Box::new(|cc| {
-            if detect_is_dark() {
+            if is_dark {
                 cc.egui_ctx.set_visuals(egui::Visuals::dark());
             } else {
                 cc.egui_ctx.set_visuals(egui::Visuals::light());
