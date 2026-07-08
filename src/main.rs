@@ -583,11 +583,27 @@ impl eframe::App for FlintApp {
     }
 }
 
+fn load_icon() -> Option<egui::IconData> {
+    let png = include_bytes!("../flint-icon.png");
+    let img = image::load_from_memory(png).ok()?;
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Some(egui::IconData {
+        rgba: rgba.into_raw(),
+        width,
+        height,
+    })
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let is_dark = detect_is_dark();
+    let icon = load_icon();
+    let mut viewport = egui::ViewportBuilder::default().with_inner_size([720.0, 400.0]);
+    if let Some(icon) = icon {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([720.0, 400.0]),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
