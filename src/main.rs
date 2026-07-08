@@ -227,9 +227,30 @@ fn parse_dd_progress(line: &str) -> Option<u64> {
     }
 }
 
+fn box_fill_from(panel: egui::Color32) -> egui::Color32 {
+    let [r, g, b, a] = panel.to_array();
+    let avg = (r as u16 + g as u16 + b as u16) / 3;
+    if avg > 128 {
+        egui::Color32::from_rgba_premultiplied(
+            r.saturating_sub(25),
+            g.saturating_sub(25),
+            b.saturating_sub(25),
+            a,
+        )
+    } else {
+        egui::Color32::from_rgba_premultiplied(
+            (r as u16 + 25).min(255) as u8,
+            (g as u16 + 25).min(255) as u8,
+            (b as u16 + 25).min(255) as u8,
+            a,
+        )
+    }
+}
+
 fn render_action_ui(ui: &mut egui::Ui, visuals: &egui::Visuals, app: &mut FlintApp) {
+    let box_fill = box_fill_from(visuals.panel_fill);
     egui::Frame::default()
-        .fill(visuals.window_fill)
+        .fill(box_fill)
         .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(12, 12))
         .show(ui, |ui| {
@@ -329,17 +350,17 @@ fn render_action_ui(ui: &mut egui::Ui, visuals: &egui::Visuals, app: &mut FlintA
 }
 
 fn render_log_ui(ui: &mut egui::Ui, visuals: &egui::Visuals, app: &mut FlintApp) {
+    let box_fill = box_fill_from(visuals.panel_fill);
     egui::Frame::default()
-        .fill(visuals.window_fill)
+        .fill(box_fill)
         .corner_radius(egui::CornerRadius::same(6))
-        .inner_margin(egui::Margin::symmetric(12, 8))
+        .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.strong("Log");
             });
             ui.add_space(4.0);
             egui::ScrollArea::vertical()
-                .max_height(120.0)
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     for line in &app.log {
@@ -387,17 +408,22 @@ impl eframe::App for FlintApp {
 
         if self.show_log {
             ui.add_space(8.0);
-            ui.vertical_centered(|ui| {
-                render_action_ui(ui, &visuals, self);
-            });
-            ui.add_space(8.0);
-            ui.vertical_centered(|ui| {
-                render_log_ui(ui, &visuals, self);
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                ui.vertical_centered(|ui| {
+                    render_action_ui(ui, &visuals, self);
+                });
+                ui.add_space(8.0);
+                ui.vertical_centered(|ui| {
+                    render_log_ui(ui, &visuals, self);
+                });
+                ui.add_space(8.0);
             });
         } else {
             egui::Area::new(egui::Id::new("action_center"))
                 .anchor(egui::Align2::CENTER_CENTER, (0.0, -8.0))
                 .show(ui.ctx(), |ui| {
+                    ui.set_max_width(500.0);
                     ui.vertical_centered(|ui| {
                         render_action_ui(ui, &visuals, self);
                     });
@@ -414,7 +440,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let is_dark = detect_is_dark();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([520.0, 440.0]),
+            .with_inner_size([720.0, 400.0]),
         ..Default::default()
     };
     eframe::run_native(
