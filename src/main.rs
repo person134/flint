@@ -1,7 +1,7 @@
 use eframe::egui;
 use rfd::FileDialog;
 use serde::Deserialize;
-use std::io::{BufRead, BufReader};
+use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -33,6 +33,7 @@ enum Message {
     Progress(u64, u64),
     Done(bool),
     Log(String),
+    Status(String),
 }
 
 struct FlintApp {
@@ -143,11 +144,11 @@ impl FlintApp {
         }
         let iso_path = self.iso_path.clone();
         let dev_path = self.usb_devices[self.selected_idx].path.clone();
+        let dev_label = self.usb_devices[self.selected_idx].label.clone();
         let (tx, rx) = mpsc::channel();
         self.rx = Some(rx);
         self.flashing = true;
         self.progress = 0.0;
-        self.log.push("Starting flash...".to_string());
         self.status = "Flashing...".to_string();
         self.cancel.store(false, Ordering::SeqCst);
         let cancel = self.cancel.clone();
@@ -170,6 +171,17 @@ impl FlintApp {
                 return;
             }
 
+            let total_mb = total as f64 / 1_048_576.0;
+            let _ = tx.send(Message::Log(format!(
+                "ISO: {} ({:.1} MB)", iso_path, total_mb
+            )));
+            let _ = tx.send(Message::Log(format!(
+                "Device: {} ({})", dev_label, dev_path
+            )));
+            let _ = tx.send(Message::Log(format!(
+                "Running: dd if={} of={} bs=4M conv=fsync", iso_path, dev_path
+            )));
+
             let mut child = match Command::new("pkexec")
                 .arg("dd")
                 .arg(format!("if={}", iso_path))
@@ -187,10 +199,11 @@ impl FlintApp {
                 }
             };
 
-            let stderr = child.stderr.take().expect("stderr not captured");
-            let reader = BufReader::new(stderr);
+            let mut stderr = child.stderr.take().expect("stderr not captured");
+            let mut buf = vec![0u8; 4096];
+            let mut acc = Vec::new();
 
-            for line in reader.lines() {
+            loop {
                 if cancel.load(Ordering::SeqCst) {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -198,11 +211,47 @@ impl FlintApp {
                     let _ = tx.send(Message::Done(false));
                     return;
                 }
-                if let Ok(line) = line {
-                    if let Some(bytes) = parse_dd_progress(&line) {
-                        let _ = tx.send(Message::Progress(bytes, total));
+
+                let n = stderr.read(&mut buf).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                acc.extend_from_slice(&buf[..n]);
+
+                while let Some(pos) = acc.iter().position(|&b| b == b'\r' || b == b'\n') {
+                    let line: Vec<u8> = acc.drain(..pos).collect();
+                    acc.drain(..1);
+                    if !line.is_empty() {
+                        let s = String::from_utf8_lossy(&line);
+                        let trimmed = s.trim();
+                        if !trimmed.is_empty() {
+                            if let Some(bytes) = parse_dd_progress(trimmed) {
+                                let pct = bytes as f64 / total as f64;
+                                let done_mb = bytes as f64 / 1_048_576.0;
+                                let _ = tx.send(Message::Progress(bytes, total));
+                                let _ = tx.send(Message::Status(format!(
+                                    "Flashing... {:.1}% ({:.1} / {:.1} MB)", pct * 100.0, done_mb, total_mb
+                                )));
+                            }
+                            let _ = tx.send(Message::Log(trimmed.to_string()));
+                        }
                     }
-                    let _ = tx.send(Message::Log(line));
+                }
+            }
+
+            if !acc.is_empty() {
+                let s = String::from_utf8_lossy(&acc);
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    if let Some(bytes) = parse_dd_progress(trimmed) {
+                        let pct = bytes as f64 / total as f64;
+                        let done_mb = bytes as f64 / 1_048_576.0;
+                        let _ = tx.send(Message::Progress(bytes, total));
+                        let _ = tx.send(Message::Status(format!(
+                            "Flashing... {:.1}% ({:.1} / {:.1} MB)", pct * 100.0, done_mb, total_mb
+                        )));
+                    }
+                    let _ = tx.send(Message::Log(trimmed.to_string()));
                 }
             }
 
@@ -394,7 +443,9 @@ impl eframe::App for FlintApp {
                 match msg {
                     Message::Progress(bytes, total) => {
                         self.progress = bytes as f32 / total as f32;
-                        self.status = format!("Flashing... {:.1}%", self.progress * 100.0);
+                    }
+                    Message::Status(s) => {
+                        self.status = s;
                     }
                     Message::Done(success) => {
                         self.flashing = false;
