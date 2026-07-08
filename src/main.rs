@@ -407,17 +407,22 @@ impl eframe::App for FlintApp {
         }
 
         if self.show_log {
+            let avail = ui.available_size();
+            let action_w = 420.0;
+            let log_w = (avail.x - action_w - 24.0).max(200.0);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(action_w, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| render_action_ui(ui, &visuals, self),
+                );
                 ui.add_space(8.0);
-                ui.vertical_centered(|ui| {
-                    render_action_ui(ui, &visuals, self);
-                });
-                ui.add_space(8.0);
-                ui.vertical_centered(|ui| {
-                    render_log_ui(ui, &visuals, self);
-                });
-                ui.add_space(8.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(log_w, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| render_log_ui(ui, &visuals, self),
+                );
             });
         } else {
             egui::Area::new(egui::Id::new("action_center"))
