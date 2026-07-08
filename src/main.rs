@@ -1,18 +1,25 @@
 use eframe::egui;
 use rfd::FileDialog;
-use serde::Deserialize;
+#[cfg(target_os = "linux")]
 use std::io::Read;
-use std::process::{Command, Stdio};
+#[cfg(target_os = "linux")]
+use std::process::Stdio;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 
+#[cfg(target_os = "linux")]
+use serde::Deserialize;
+
+#[cfg(target_os = "linux")]
 #[derive(Deserialize)]
 struct LsblkDevices {
     blockdevices: Vec<LsblkDevice>,
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Deserialize)]
 struct LsblkDevice {
     name: String,
@@ -53,43 +60,64 @@ struct FlintApp {
 }
 
 fn detect_is_dark() -> bool {
-    let home = std::env::var("HOME").unwrap_or_default();
-
-    if let Ok(output) = Command::new("gsettings")
-        .args(["get", "org.gnome.desktop.interface", "color-scheme"])
-        .output()
+    #[cfg(target_os = "windows")]
     {
-        let s = String::from_utf8_lossy(&output.stdout);
-        if s.contains("prefer-dark") {
-            return true;
-        }
-        if let Ok(output) = Command::new("gsettings")
-            .args(["get", "org.gnome.desktop.interface", "gtk-theme"])
+        if let Ok(output) = Command::new("reg")
+            .args([
+                "query",
+                "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                "/v",
+                "AppsUseLightTheme",
+            ])
             .output()
         {
-            let t = String::from_utf8_lossy(&output.stdout).to_lowercase();
-            if t.contains("dark") || t.contains("night") {
+            let s = String::from_utf8_lossy(&output.stdout);
+            if s.contains("0x0") {
                 return true;
             }
         }
     }
 
-    if let Ok(content) = std::fs::read_to_string(format!("{}/.config/kdeglobals", home)) {
-        if content.to_lowercase().contains("colorscheme=") {
-            for line in content.lines() {
-                if let Some(name) = line.strip_prefix("ColorScheme=") {
-                    if name.to_lowercase().contains("dark") {
-                        return true;
+    #[cfg(target_os = "linux")]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+
+        if let Ok(output) = Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "color-scheme"])
+            .output()
+        {
+            let s = String::from_utf8_lossy(&output.stdout);
+            if s.contains("prefer-dark") {
+                return true;
+            }
+            if let Ok(output) = Command::new("gsettings")
+                .args(["get", "org.gnome.desktop.interface", "gtk-theme"])
+                .output()
+            {
+                let t = String::from_utf8_lossy(&output.stdout).to_lowercase();
+                if t.contains("dark") || t.contains("night") {
+                    return true;
+                }
+            }
+        }
+
+        if let Ok(content) = std::fs::read_to_string(format!("{}/.config/kdeglobals", home)) {
+            if content.to_lowercase().contains("colorscheme=") {
+                for line in content.lines() {
+                    if let Some(name) = line.strip_prefix("ColorScheme=") {
+                        if name.to_lowercase().contains("dark") {
+                            return true;
+                        }
                     }
                 }
             }
         }
-    }
 
-    for path in &[".config/gtk-3.0/settings.ini", ".config/gtk-4.0/settings.ini"] {
-        if let Ok(content) = std::fs::read_to_string(format!("{}/{}", home, path)) {
-            if content.contains("gtk-application-prefer-dark-theme=1") {
-                return true;
+        for path in &[".config/gtk-3.0/settings.ini", ".config/gtk-4.0/settings.ini"] {
+            if let Ok(content) = std::fs::read_to_string(format!("{}/{}", home, path)) {
+                if content.contains("gtk-application-prefer-dark-theme=1") {
+                    return true;
+                }
             }
         }
     }
@@ -118,6 +146,7 @@ impl FlintApp {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn detect_usb_devices() -> Vec<UsbDevice> {
         let mut devices = Vec::new();
 
@@ -156,6 +185,39 @@ impl FlintApp {
         devices
     }
 
+    #[cfg(target_os = "windows")]
+    fn detect_usb_devices() -> Vec<UsbDevice> {
+        let mut devices = Vec::new();
+        if let Ok(output) = Command::new("wmic")
+            .args([
+                "diskdrive",
+                "where",
+                "InterfaceType='USB'",
+                "get",
+                "DeviceID,Model,Size",
+                "/format:csv",
+            ])
+            .output()
+        {
+            let s = String::from_utf8_lossy(&output.stdout);
+            for line in s.lines().skip(1) {
+                let parts: Vec<&str> = line.split(',').collect();
+                if parts.len() >= 3 {
+                    let dev_id = parts.get(1).unwrap_or(&"").trim();
+                    let model = parts.get(2).unwrap_or(&"").trim();
+                    if !dev_id.is_empty() {
+                        let label = format!("{} ({})", dev_id, model);
+                        devices.push(UsbDevice {
+                            path: dev_id.to_string(),
+                            label,
+                        });
+                    }
+                }
+            }
+        }
+        devices
+    }
+
     fn refresh_devices(&mut self) {
         self.usb_devices = Self::detect_usb_devices();
         if self.selected_idx >= self.usb_devices.len() {
@@ -163,6 +225,7 @@ impl FlintApp {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn is_root() -> bool {
         Command::new("id")
             .arg("-u")
@@ -173,6 +236,7 @@ impl FlintApp {
             == Some(0)
     }
 
+    #[cfg(target_os = "linux")]
     fn start_flash(&mut self) {
         if self.iso_path.is_empty() || self.usb_devices.is_empty() {
             return;
@@ -216,7 +280,7 @@ impl FlintApp {
 
             let root = Self::is_root();
             let _ = tx.send(Message::Log(format!(
-                "Running as root: {}", root
+                "Running as admin: {}", root
             )));
 
             let mut child;
@@ -322,11 +386,108 @@ impl FlintApp {
         });
     }
 
+    #[cfg(target_os = "windows")]
+    fn start_flash(&mut self) {
+        if self.iso_path.is_empty() || self.usb_devices.is_empty() {
+            return;
+        }
+        let iso_path = self.iso_path.clone();
+        let dev_path = self.usb_devices[self.selected_idx].path.clone();
+        let dev_label = self.usb_devices[self.selected_idx].label.clone();
+        let (tx, rx) = mpsc::channel();
+        self.rx = Some(rx);
+        self.flashing = true;
+        self.progress = 0.0;
+        self.status = "Flashing...".to_string();
+        self.cancel.store(false, Ordering::SeqCst);
+        let cancel = self.cancel.clone();
+
+        thread::spawn(move || {
+            use std::io::{Read, Write};
+
+            let total = std::fs::metadata(&iso_path)
+                .map(|m| m.len())
+                .unwrap_or(0);
+
+            if total == 0 {
+                let _ = tx.send(Message::Log("Failed to get ISO file size".to_string()));
+                let _ = tx.send(Message::Done(false));
+                return;
+            }
+
+            let total_mb = total as f64 / 1_048_576.0;
+            let _ = tx.send(Message::Log(format!(
+                "ISO: {} ({:.1} MB)", iso_path, total_mb
+            )));
+            let _ = tx.send(Message::Log(format!(
+                "Device: {} ({})", dev_label, dev_path
+            )));
+
+            let mut inp = match std::fs::File::open(&iso_path) {
+                Ok(f) => f,
+                Err(e) => {
+                    let _ = tx.send(Message::Log(format!("Failed to open ISO: {}", e)));
+                    let _ = tx.send(Message::Done(false));
+                    return;
+                }
+            };
+
+            let mut out = match std::fs::OpenOptions::new().write(true).open(&dev_path) {
+                Ok(f) => f,
+                Err(e) => {
+                    let _ = tx.send(Message::Log(format!(
+                        "Failed to open device (run as admin): {}", e
+                    )));
+                    let _ = tx.send(Message::Done(false));
+                    return;
+                }
+            };
+
+            let mut buf = vec![0u8; 4 * 1024 * 1024];
+            let mut written: u64 = 0;
+
+            loop {
+                if cancel.load(Ordering::SeqCst) {
+                    let _ = tx.send(Message::Log("Cancelled by user".to_string()));
+                    let _ = tx.send(Message::Done(false));
+                    return;
+                }
+
+                let n = match inp.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(e) => {
+                        let _ = tx.send(Message::Log(format!("Read error: {}", e)));
+                        let _ = tx.send(Message::Done(false));
+                        return;
+                    }
+                };
+
+                if let Err(e) = out.write_all(&buf[..n]) {
+                    let _ = tx.send(Message::Log(format!("Write error: {}", e)));
+                    let _ = tx.send(Message::Done(false));
+                    return;
+                }
+
+                written += n as u64;
+                let pct = written as f64 / total as f64;
+                let done_mb = written as f64 / 1_048_576.0;
+                let _ = tx.send(Message::Progress(written, total));
+                let _ = tx.send(Message::Status(format!(
+                    "Flashing... {:.1}% ({:.1} / {:.1} MB)", pct * 100.0, done_mb, total_mb
+                )));
+            }
+
+            let _ = tx.send(Message::Done(true));
+        });
+    }
+
     fn cancel_flash(&mut self) {
         self.cancel.store(true, Ordering::SeqCst);
         self.status = "Cancelling...".to_string();
     }
 
+    #[cfg(target_os = "linux")]
     fn setup_desktop_integration() {
         let home = match std::env::var("HOME") {
             Ok(h) => h,
@@ -369,6 +530,7 @@ impl FlintApp {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn parse_dd_progress(line: &str) -> Option<u64> {
     let line = line.trim();
     if let Some(end) = line.find(" bytes (") {
@@ -712,6 +874,7 @@ fn make_icon() -> egui::IconData {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "linux")]
     FlintApp::setup_desktop_integration();
     let is_dark = detect_is_dark();
     let icon = make_icon();
