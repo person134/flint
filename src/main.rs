@@ -496,15 +496,13 @@ impl FlintApp {
 
         let png_128 = include_bytes!("../icon-128.png");
 
-        let dirs = ["128x128"];
-        for dir in &dirs {
-            let path = format!("{}/.local/share/icons/hicolor/{}/apps", home, dir);
-            let _ = std::fs::create_dir_all(&path);
-            let file_path = format!("{}/flint.png", path);
-            if !std::path::Path::new(&file_path).exists() {
-                let _ = std::fs::write(&file_path, png_128);
-            }
-        }
+        let path = format!("{}/.local/share/icons/hicolor/128x128/apps", home);
+        let _ = std::fs::create_dir_all(&path);
+        let _ = std::fs::write(format!("{}/flint.png", path), png_128);
+
+        let _ = std::process::Command::new("gtk-update-icon-cache")
+            .args(["-f", "-t", &format!("{}/.local/share/icons/hicolor", home)])
+            .output();
 
         let apps_dir = format!("{}/.local/share/applications", home);
         let _ = std::fs::create_dir_all(&apps_dir);
