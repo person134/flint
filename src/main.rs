@@ -494,11 +494,19 @@ impl FlintApp {
             Err(_) => return,
         };
 
-        let png_128 = include_bytes!("../icon-128.png");
+        let img = image::load_from_memory(include_bytes!("../icon-128.png"))
+            .expect("Failed to load icon")
+            .into_rgba8();
 
-        let path = format!("{}/.local/share/icons/hicolor/128x128/apps", home);
-        let _ = std::fs::create_dir_all(&path);
-        let _ = std::fs::write(format!("{}/flint.png", path), png_128);
+        for &size in &[128, 64, 48, 32] {
+            let scaled = image::imageops::resize(
+                &img, size, size, image::imageops::FilterType::Lanczos3,
+            );
+            let dir = format!("{}/.local/share/icons/hicolor/{}x{}/apps", home, size, size);
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = image::DynamicImage::ImageRgba8(scaled)
+                .save(format!("{}/flint.png", dir));
+        }
 
         let _ = std::process::Command::new("gtk-update-icon-cache")
             .args(["-f", "-t", &format!("{}/.local/share/icons/hicolor", home)])
@@ -507,24 +515,26 @@ impl FlintApp {
         let apps_dir = format!("{}/.local/share/applications", home);
         let _ = std::fs::create_dir_all(&apps_dir);
         let desktop_path = format!("{}/flint.desktop", apps_dir);
-        if !std::path::Path::new(&desktop_path).exists() {
-            let bin_path = std::env::current_exe()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| "flint".to_string());
-            let desktop = format!(
-                "[Desktop Entry]\n\
-                 Type=Application\n\
-                 Name=flint\n\
-                 Comment=Flash ISO files to USB drives\n\
-                 Exec={}\n\
-                 Icon=flint\n\
-                 Terminal=false\n\
-                 Categories=Utility;X-GNOME-Utilities;\n\
-                 StartupWMClass=flint\n",
-                bin_path
-            );
-            let _ = std::fs::write(&desktop_path, desktop);
-        }
+        let bin_path = std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "flint".to_string());
+        let desktop = format!(
+            "[Desktop Entry]\n\
+             Type=Application\n\
+             Name=flint\n\
+             Comment=Flash ISO files to USB drives\n\
+             Exec={}\n\
+             Icon=flint\n\
+             Terminal=false\n\
+             Categories=Utility;X-GNOME-Utilities;\n\
+             StartupWMClass=flint\n",
+            bin_path
+        );
+        let _ = std::fs::write(&desktop_path, desktop);
+
+        let _ = std::process::Command::new("update-desktop-database")
+            .arg(&apps_dir)
+            .output();
     }
 }
 
