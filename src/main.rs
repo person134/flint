@@ -496,7 +496,7 @@ impl FlintApp {
 
         let png_128 = include_bytes!("../icon-128.png");
 
-        let dirs = ["16x16", "32x32", "48x48", "64x64", "128x128"];
+        let dirs = ["128x128"];
         for dir in &dirs {
             let path = format!("{}/.local/share/icons/hicolor/{}/apps", home, dir);
             let _ = std::fs::create_dir_all(&path);
