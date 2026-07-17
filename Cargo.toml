@@ -1,0 +1,31 @@
+[package]
+name = "flint"
+version = "1.6.0"
+edition = "2021"
+license = "MIT"
+authors = ["person134"]
+description = "A simple GUI tool for flashing ISO files to USB drives"
+
+[dependencies]
+eframe = "0.35"
+egui = "0.35"
+rfd = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = "0.25"
+sha2 = "0.10"
+hex = "0.4"
+zip = "2"
+lzma-rs = "0.3"
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+# Unix-specific dependencies (empty for now)
+
+[build-dependencies]
+embed-resource = "3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
