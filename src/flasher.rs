@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -165,35 +165,7 @@ fn flash_raw_linux(
     let stderr = child.stderr.take().expect("stderr not captured");
     let reader = BufReader::new(stderr);
 
-    for line_result in reader.lines() {
-        if cancel.load(Ordering::SeqCst) {
-            let _ = child.kill();
-            let _ = child.wait();
-            send_log(tx, "Cancelled by user".to_string());
-            return false;
-        }
-
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => break,
-        };
-
-        let trimmed = line.trim().to_string();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        if let Some(bytes) = progress::parse_dd_progress(&trimmed) {
-            let pct = bytes as f64 / total as f64;
-            let done_mb = bytes as f64 / 1_048_576.0;
-            let _ = tx.send(Message::Progress(bytes, total));
-            let _ = tx.send(Message::Status(format!(
-                "Flashing... {:.1}% ({:.1} / {:.1} MB)",
-                pct * 100.0, done_mb, total_mb
-            )));
-        }
-        let _ = tx.send(Message::Log(trimmed));
-    }
+    process_dd_output(reader, total, total_mb, cancel, tx);
 
     child.wait().map(|s| s.success()).unwrap_or(false)
 }
@@ -335,36 +307,7 @@ fn flash_raw_macos(
     let stderr = child.stderr.take().expect("stderr not captured");
     let reader = BufReader::new(stderr);
 
-    for line_result in reader.lines() {
-        if cancel.load(Ordering::SeqCst) {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = Command::new("diskutil").args(["eject", dev_path]).output();
-            send_log(tx, "Cancelled by user".to_string());
-            return false;
-        }
-
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => break,
-        };
-
-        let trimmed = line.trim().to_string();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        if let Some(bytes) = progress::parse_dd_progress(&trimmed) {
-            let pct = bytes as f64 / total as f64;
-            let done_mb = bytes as f64 / 1_048_576.0;
-            let _ = tx.send(Message::Progress(bytes, total));
-            let _ = tx.send(Message::Status(format!(
-                "Flashing... {:.1}% ({:.1} / {:.1} MB)",
-                pct * 100.0, done_mb, total_mb
-            )));
-        }
-        let _ = tx.send(Message::Log(trimmed));
-    }
+    process_dd_output(reader, total, total_mb, cancel, tx);
 
     let success = child.wait().map(|s| s.success()).unwrap_or(false);
     let _ = Command::new("diskutil").args(["eject", dev_path]).output();
@@ -588,6 +531,58 @@ fn find_best_zip_entry(archive: &mut zip::ZipArchive<std::fs::File>) -> usize {
     }
 
     best
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn process_dd_output<R: Read>(
+    mut reader: R,
+    total: u64,
+    total_mb: f64,
+    cancel: &Arc<AtomicBool>,
+    tx: &mpsc::Sender<Message>,
+) {
+    let mut buf = [0u8; 4096];
+    let mut acc = Vec::new();
+
+    loop {
+        if cancel.load(Ordering::SeqCst) {
+            return;
+        }
+
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => break,
+        };
+
+        acc.extend_from_slice(&buf[..n]);
+
+        while let Some(pos) = acc.iter().position(|&b| b == b'\r' || b == b'\n') {
+            let line: Vec<u8> = acc.drain(..pos).collect();
+            acc.drain(..1);
+
+            if line.is_empty() {
+                continue;
+            }
+
+            let s = String::from_utf8_lossy(&line);
+            let trimmed = s.trim().to_string();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            if let Some(bytes) = progress::parse_dd_progress(&trimmed) {
+                let pct = bytes as f64 / total as f64;
+                let done_mb = bytes as f64 / 1_048_576.0;
+                let _ = tx.send(Message::Progress(bytes, total));
+                let _ = tx.send(Message::Status(format!(
+                    "Flashing... {:.1}% ({:.1} / {:.1} MB)",
+                    pct * 100.0, done_mb, total_mb
+                )));
+            }
+            let _ = tx.send(Message::Log(trimmed));
+        }
+    }
 }
 
 fn send_log(tx: &mpsc::Sender<Message>, msg: String) {

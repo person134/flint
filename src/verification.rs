@@ -1,4 +1,6 @@
 use std::io::Read;
+#[cfg(target_os = "linux")]
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -36,11 +38,12 @@ pub fn verify_flash(
     let _ = tx.send(Message::Log(format!("Source SHA256: {}", hex::encode(&iso_hash))));
     let _ = tx.send(Message::VerifyProgress(0.5));
 
-    let dev_hash = match hash_device(dev_path, size, cancel, &tx) {
+    let dev_hash = match hash_device(dev_path, size, cancel.clone(), &tx) {
         Some(h) => h,
         None => {
-            let _ = tx.send(Message::Log("Verification cancelled or failed".to_string()));
-            let _ = tx.send(Message::VerifyDone(false, "Verification failed".to_string()));
+            let _ = tx.send(Message::Log("Verification failed — cannot read device (try running as root)".to_string()));
+            let _ = tx.send(Message::Log(format!("Source SHA256: {}", hex::encode(&iso_hash))));
+            let _ = tx.send(Message::VerifyDone(false, "Verification failed — cannot read device".to_string()));
             return;
         }
     };
@@ -49,11 +52,11 @@ pub fn verify_flash(
     let _ = tx.send(Message::VerifyProgress(1.0));
 
     if iso_hash == dev_hash {
-        let _ = tx.send(Message::Log("Verification PASSED - hashes match".to_string()));
+        let _ = tx.send(Message::Log("Verification PASSED — hashes match".to_string()));
         let _ = tx.send(Message::VerifyDone(true, "Flash verified successfully!".to_string()));
     } else {
-        let _ = tx.send(Message::Log("Verification FAILED - hashes differ".to_string()));
-        let _ = tx.send(Message::VerifyDone(false, "Verification FAILED - data may be corrupted".to_string()));
+        let _ = tx.send(Message::Log("Verification FAILED — hashes differ".to_string()));
+        let _ = tx.send(Message::VerifyDone(false, "Verification FAILED — data may be corrupted".to_string()));
     }
 }
 
@@ -85,12 +88,19 @@ fn hash_file(path: &str, max_bytes: u64, cancel: Arc<AtomicBool>, _tx: &mpsc::Se
     Some(hasher.finalize().to_vec())
 }
 
-fn hash_device(path: &str, max_bytes: u64, cancel: Arc<AtomicBool>, tx: &mpsc::Sender<Message>) -> Option<Vec<u8>> {
-    let mut file = std::fs::File::open(path).ok()?;
+fn hash_device(
+    path: &str,
+    max_bytes: u64,
+    cancel: Arc<AtomicBool>,
+    tx: &mpsc::Sender<Message>,
+) -> Option<Vec<u8>> {
+    let reader = open_device_for_read(path, max_bytes)?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1_048_576];
     let mut remaining = max_bytes;
     let total = max_bytes;
+
+    let mut reader = reader;
 
     loop {
         if cancel.load(Ordering::SeqCst) {
@@ -102,7 +112,7 @@ fn hash_device(path: &str, max_bytes: u64, cancel: Arc<AtomicBool>, tx: &mpsc::S
             break;
         }
 
-        let n = file.read(&mut buf[..to_read]).ok()?;
+        let n = reader.read(&mut buf[..to_read]).ok()?;
         if n == 0 {
             break;
         }
@@ -115,6 +125,49 @@ fn hash_device(path: &str, max_bytes: u64, cancel: Arc<AtomicBool>, tx: &mpsc::S
     }
 
     Some(hasher.finalize().to_vec())
+}
+
+fn open_device_for_read(path: &str, size: u64) -> Option<Box<dyn Read + Send>> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(file) = std::fs::File::open(path) {
+            return Some(Box::new(file));
+        }
+        return open_device_via_pkexec(path, size);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::fs::File::open(path).ok().map(|f| Box::new(f) as Box<dyn Read + Send>)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::fs::File::open(path).ok().map(|f| Box::new(f) as Box<dyn Read + Send>)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn open_device_via_pkexec(path: &str, size: u64) -> Option<Box<dyn Read + Send>> {
+    let block_size: u64 = 4 * 1024 * 1024;
+    let count = (size + block_size - 1) / block_size;
+
+    let child = Command::new("pkexec")
+        .args([
+            "dd",
+            &format!("if={}", path),
+            &format!("bs={}", block_size),
+            &format!("count={}", count),
+            "status=none",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    child.stdout.map(|s| Box::new(s) as Box<dyn Read + Send>)
 }
 
 #[cfg(test)]
