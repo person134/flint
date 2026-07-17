@@ -142,16 +142,15 @@ fn flash_raw_linux(
     } else {
         match Command::new("pkexec")
             .args([
-                "dd",
-                &format!("if={}", iso_path),
-                &format!("of={}", dev_path),
-                "bs=4M",
-                "status=progress",
-                "conv=fsync",
-                "iflag=fullblock",
+                "sh",
+                "-c",
+                &format!(
+                    "dd if='{}' of='{}' bs=4M status=progress conv=fsync iflag=fullblock 2>&1",
+                    iso_path, dev_path
+                ),
             ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
             .spawn()
         {
             Ok(c) => c,
@@ -162,8 +161,12 @@ fn flash_raw_linux(
         }
     };
 
-    let stderr = child.stderr.take().expect("stderr not captured");
-    let reader = BufReader::new(stderr);
+    let output_pipe: Box<dyn Read + Send> = if root {
+        Box::new(child.stderr.take().expect("stderr not captured"))
+    } else {
+        Box::new(child.stdout.take().expect("stdout not captured"))
+    };
+    let reader = BufReader::new(output_pipe);
 
     process_dd_output(reader, total, total_mb, cancel, tx);
 
