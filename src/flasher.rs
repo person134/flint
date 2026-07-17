@@ -140,15 +140,12 @@ fn flash_raw_linux(
             }
         }
     } else {
+        let cmd = format!(
+            "dd if='{}' of='{}' bs=4M status=progress conv=fsync iflag=fullblock",
+            iso_path, dev_path
+        );
         match Command::new("pkexec")
-            .args([
-                "sh",
-                "-c",
-                &format!(
-                    "dd if='{}' of='{}' bs=4M status=progress conv=fsync iflag=fullblock 2>&1",
-                    iso_path, dev_path
-                ),
-            ])
+            .args(["script", "-q", "-f", "-c", &cmd, "/dev/stdout"])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
